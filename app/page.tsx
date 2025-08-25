@@ -72,7 +72,7 @@ export default function Page() {
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
 
-    const resp = await fetch('/api/realtime/session');
+    const resp = await fetch('/api/session');
     const answer = { type: 'answer', sdp: await resp.text() }
     await pc.setRemoteDescription(answer as RTCSessionDescriptionInit)
 
