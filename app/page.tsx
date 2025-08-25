@@ -13,97 +13,77 @@ export default function Page() {
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('idle')
 
-  // Realtime state
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const dcRef = useRef<RTCDataChannel | null>(null)
-  const accRef = useRef<string>('') // accumulate assistant text for current turn
+  const accRef = useRef<string>('') // accumulate assistant text
   const connectPromiseRef = useRef<Promise<void> | null>(null)
 
-  // --- helpers ---------------------------------------------------------------
-
-  function waitForIceGatheringComplete(pc: RTCPeerConnection, timeoutMs = 8000) {
+  function waitForIce(pc: RTCPeerConnection, timeoutMs = 8000) {
     if (pc.iceGatheringState === 'complete') return Promise.resolve()
-    return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => resolve(), timeoutMs) // don't fail hard; proceed
+    return new Promise<void>((resolve) => {
+      const t = setTimeout(() => resolve(), timeoutMs)
       pc.addEventListener('icegatheringstatechange', () => {
-        if (pc.iceGatheringState === 'complete') {
-          clearTimeout(timer)
-          resolve()
-        }
+        if (pc.iceGatheringState === 'complete') { clearTimeout(t); resolve() }
       })
     })
   }
 
-  function waitForDataChannelOpen(dc: RTCDataChannel, timeoutMs = 15000) {
+  function waitForDCOpen(dc: RTCDataChannel, timeoutMs = 15000) {
     if (dc.readyState === 'open') return Promise.resolve()
     return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Data channel open timeout')), timeoutMs)
-      const onOpen = () => { clearTimeout(timer); cleanup(); resolve() }
-      const onClose = () => { clearTimeout(timer); cleanup(); reject(new Error('Data channel closed')) }
-      const cleanup = () => {
-        dc.removeEventListener('open', onOpen)
-        dc.removeEventListener('close', onClose)
-      }
-      dc.addEventListener('open', onOpen)
-      dc.addEventListener('close', onClose)
+      const t = setTimeout(() => reject(new Error('Data channel open timeout')), timeoutMs)
+      const onOpen = () => { clearTimeout(t); cleanup(); resolve() }
+      const onClose = () => { clearTimeout(t); cleanup(); reject(new Error('Data channel closed')) }
+      const cleanup = () => { dc.removeEventListener('open', onOpen); dc.removeEventListener('close', onClose) }
+      dc.addEventListener('open', onOpen); dc.addEventListener('close', onClose)
     })
   }
 
-  // --- main connect flow -----------------------------------------------------
-
   async function ensureRealtime() {
-    // Already open?
     if (pcRef.current && dcRef.current?.readyState === 'open') return
-
-    // In-flight connect? await it
     if (connectPromiseRef.current) return connectPromiseRef.current
 
     connectPromiseRef.current = (async () => {
-      setStatus('starting')
+      setStatus('session')
 
-      // 1) Get a session + ephemeral token (robust JSON handling)
-      const res = await fetch('/api/session') // or '/api/realtime/session' if that's your path
+      // 1) Fetch ephemeral session (MUST return { ok:true, token, model })
+      const res = await fetch('/api/session')
       const bodyText = await res.text()
       let sess: any
       try { sess = JSON.parse(bodyText) } catch {
-        throw new Error(`Expected JSON from /api/session; got: ${bodyText.slice(0, 200)}`)
+        throw new Error(`Expected JSON from /api/session; got: ${bodyText.slice(0,200)}`)
       }
       if (!res.ok || !sess?.ok) {
-        throw new Error(`Session error (${res.status}): ${sess?.error || bodyText.slice(0, 200)}`)
+        throw new Error(`Session error (${res.status}): ${sess?.error || bodyText.slice(0,200)}`)
       }
       const token: string | undefined = sess.token
       const model = encodeURIComponent(sess.model || 'gpt-4o-realtime-preview')
       if (!token) throw new Error('Missing ephemeral token in /api/session response')
 
-      // 2) Create PC and data channel
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-      })
+      // 2) Create RTCPeerConnection + data channel
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
       pcRef.current = pc
-
       const dc = pc.createDataChannel('oai-events')
       dcRef.current = dc
 
       dc.onopen = () => console.log('RTC data channel open')
       dc.onclose = () => console.log('RTC data channel closed')
 
-      // remote audio
+      // Play remote audio
       pc.ontrack = (e) => {
         const a = document.getElementById('remoteAudio') as HTMLAudioElement
-        if (a) a.srcObject = e.streams[0]
+        if (a) { a.srcObject = e.streams[0]; a.play().catch(() => {/* user gesture will trigger later */}) }
       }
 
-      // helpful logs
-      pc.oniceconnectionstatechange = () => {
-        console.log('iceConnectionState:', pc.iceConnectionState)
-        setStatus(pc.iceConnectionState)
-      }
+      // Status
+      pc.oniceconnectionstatechange = () => setStatus(pc.iceConnectionState)
 
-      // Receive model events and stream text
+      // Receive model events (handle both text delta event names)
       dc.onmessage = (ev) => {
         try {
           const evt = JSON.parse(ev.data)
-          if (evt.type === 'response.output_text.delta' && typeof evt.delta === 'string') {
+          // text delta variants
+          if ((evt.type === 'response.text.delta' || evt.type === 'response.output_text.delta') && typeof evt.delta === 'string') {
             accRef.current += evt.delta
             setMessages(prev => {
               const out = [...prev]
@@ -111,34 +91,32 @@ export default function Page() {
               out[out.length - 1] = { role: 'assistant', content: accRef.current }
               return out
             })
-          } else if (evt.type === 'response.completed') {
+          } else if (evt.type === 'response.done' || evt.type === 'response.completed') {
             accRef.current = ''
           } else if (evt.type === 'response.error') {
             setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${evt.error?.message || 'unknown'}` }])
           }
         } catch {
-          // non-JSON keepalives or other payloads
+          // ignore non-JSON keepalives
         }
       }
 
-      // 3) Mic → PC (optional: text-only still works)
+      // 3) Optional mic
       try {
         const local = await navigator.mediaDevices.getUserMedia({ audio: true })
         pc.addTrack(local.getTracks()[0])
       } catch (e) {
-        console.warn('Mic not available; continuing with text only.', e)
+        console.warn('Mic not available; continuing text-only.', e)
       }
 
-      // 4) WebRTC offer/answer with OpenAI Realtime
+      // 4) Offer/Answer (wait for ICE so SDP includes candidates)
       setStatus('creating-offer')
       const offer = await pc.createOffer()
       await pc.setLocalDescription(offer)
-
-      // Wait for ICE gathering so the SDP we send includes all candidates
       setStatus('gathering-ice')
-      await waitForIceGatheringComplete(pc)
+      await waitForIce(pc)
 
-      setStatus('posting-sdp')
+      setStatus('sdp-post')
       const sdpResp = await fetch(`https://api.openai.com/v1/realtime?model=${model}`, {
         method: 'POST',
         headers: {
@@ -148,36 +126,41 @@ export default function Page() {
         },
         body: pc.localDescription?.sdp || offer.sdp,
       })
-
       const answerSdp = await sdpResp.text()
-      if (!sdpResp.ok) {
-        throw new Error(`SDP exchange failed (${sdpResp.status}): ${answerSdp.slice(0, 300)}`)
-      }
-
+      if (!sdpResp.ok) throw new Error(`SDP exchange failed (${sdpResp.status}): ${answerSdp.slice(0,300)}`)
       await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
 
-      // 5) Wait for data channel to be OPEN before returning
-      setStatus('opening-datachannel')
-      await waitForDataChannelOpen(dc)
-
+      // 5) Wait for DC open before returning
+      setStatus('opening-dc')
+      await waitForDCOpen(dc)
       setStatus('connected')
     })()
-    try {
-      await connectPromiseRef.current
-    } finally {
-      connectPromiseRef.current = null
-    }
+
+    try { await connectPromiseRef.current } finally { connectPromiseRef.current = null }
   }
 
+  // ✅ Correct Realtime flow: add a user item, then ask for a response
   function sendRealtimeText(text: string) {
     const dc = dcRef.current
     if (!dc || dc.readyState !== 'open') throw new Error('Realtime not connected')
+
+    // Add the user's message to the default conversation
+    dc.send(JSON.stringify({
+      type: 'conversation.item.create',
+      item: {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text }]
+      }
+    }))
+
+    // Trigger the model to respond (uses session defaults; returns audio+text)
     dc.send(JSON.stringify({
       type: 'response.create',
       response: {
-        input: [{ role: 'user', content: text }],
-        modalities: ['audio', 'text'],
-      },
+        modalities: ['audio', 'text']
+        // You can also specify: instructions: "..." or conversation: "none"
+      }
     }))
   }
 
@@ -190,8 +173,8 @@ export default function Page() {
 
     try {
       setLoading(true)
-      await ensureRealtime()          // waits for DC to be open
-      sendRealtimeText(text)          // now safe to send
+      await ensureRealtime()      // waits until DC is open
+      sendRealtimeText(text)      // safe to send now
     } catch (err: any) {
       setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${err?.message || 'failed to send'}` }])
       setStatus('error')
@@ -209,7 +192,7 @@ export default function Page() {
       </header>
 
       <main className="px-4 py-4 overflow-auto bg-neutral-50 dark:bg-neutral-900">
-        <audio id="remoteAudio" autoPlay />
+        <audio id="remoteAudio" autoPlay playsInline />
         <div className="mx-auto max-w-2xl">
           {messages.map((m, i) => (
             <div key={i} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
