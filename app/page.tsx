@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 
 type Role = 'user' | 'assistant'
 type Msg = { role: Role; content: string }
@@ -15,16 +15,24 @@ export default function Page() {
   // Realtime state
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const dcRef = useRef<RTCDataChannel | null>(null)
-  const accRef = useRef<string>('')  // accumulate assistant text for current turn
+  const accRef = useRef<string>('') // accumulate assistant text for current turn
 
   async function ensureRealtime() {
     if (pcRef.current && dcRef.current?.readyState === 'open') return
 
-    // 1) Get ephemeral session token
-    const sess = await fetch('/api/session').then(r => r.json())
-    const token = sess?.client_secret?.value
-    const model = encodeURIComponent(sess?.model || 'gpt-4o-realtime-preview')
-    if (!token) throw new Error('Missing ephemeral token from /api/session')
+    // 1) Get a session + ephemeral token (robust JSON handling)
+    const res = await fetch('/api/session') // or '/api/realtime/session' if that's your path
+    const bodyText = await res.text()
+    let sess: any
+    try { sess = JSON.parse(bodyText) } catch {
+      throw new Error(`Expected JSON from /api/session; got: ${bodyText.slice(0, 200)}`)
+    }
+    if (!res.ok || !sess?.ok) {
+      throw new Error(`Session error (${res.status}): ${sess?.error || bodyText.slice(0, 200)}`)
+    }
+    const token: string | undefined = sess.token
+    const model = encodeURIComponent(sess.model || 'gpt-4o-realtime-preview')
+    if (!token) throw new Error('Missing ephemeral token in /api/session response')
 
     // 2) Create PC and data channel
     const pc = new RTCPeerConnection()
@@ -60,7 +68,7 @@ export default function Page() {
       }
     }
 
-    // 3) Mic → PC
+    // 3) Mic → PC (optional: text-only still works)
     try {
       const local = await navigator.mediaDevices.getUserMedia({ audio: true })
       pc.addTrack(local.getTracks()[0])
@@ -68,11 +76,19 @@ export default function Page() {
       console.warn('Mic not available; continuing with text only.', e)
     }
 
-    // 4) WebRTC offer/answer with OpenAI
+    // 4) WebRTC offer/answer with OpenAI Realtime (use the ephemeral token)
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
 
-    const resp = await fetch('/api/session');
+    const resp = await fetch(`https://api.openai.com/v1/realtime?model=${model}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/sdp',
+        'OpenAI-Beta': 'realtime=v1',
+      },
+      body: offer.sdp,
+    })
     const answer = { type: 'answer', sdp: await resp.text() }
     await pc.setRemoteDescription(answer as RTCSessionDescriptionInit)
 
@@ -83,12 +99,12 @@ export default function Page() {
   function sendRealtimeText(text: string) {
     const dc = dcRef.current
     if (!dc || dc.readyState !== 'open') throw new Error('Realtime not connected')
-    // One response request with text content; model will reply with audio+text
+    // Ask for a response with both audio + text
     dc.send(JSON.stringify({
       type: 'response.create',
       response: {
         input: [{ role: 'user', content: text }],
-        modalities: ['audio','text'],
+        modalities: ['audio', 'text'],
       },
     }))
   }
