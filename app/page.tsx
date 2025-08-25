@@ -199,9 +199,7 @@ export default function Page() {
   const langOptions = [
     { code: 'auto', label: 'Auto' },
     { code: 'ko-KR', label: '한국어' },
-    { code: 'en-US', label: 'English (US)' },
-    { code: 'ja-JP', label: '日本語' },
-    { code: 'it-IT', label: 'Italiano' }
+    { code: 'en-US', label: 'English (US)' }    
   ]
 
   return (

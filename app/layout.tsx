@@ -1,6 +1,6 @@
 import './globals.css'
 
-export const metadata = { title: 'My Chat', description: 'Voice + chat' }
+export const metadata = { title: 'My Chat', description: 'Inoculation Chat Beta' }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

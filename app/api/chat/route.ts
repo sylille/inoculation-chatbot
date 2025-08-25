@@ -23,7 +23,7 @@ export async function POST(req: Request) {
       },
       body: JSON.stringify({
         // Use a current model name from your account's Models page
-        model: 'gpt-5-mini',
+        model: 'gpt-4o-realtime-preview',
         input: messages,
         stream: true
       })
