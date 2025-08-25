@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Bulletproof base colors (light/dark) so text is always readable */
+html, body { height: 100%; }
+:root { color-scheme: light dark; }
+
+body {
+  background: #ffffff;
+  color: #0f172a; /* slate-900 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #0a0a0a; /* neutral-950 */
+    color: #f1f5f9;      /* slate-100 */
+  }
+}
