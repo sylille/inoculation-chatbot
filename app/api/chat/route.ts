@@ -3,17 +3,22 @@ export const runtime = 'edge';
 export const preferredRegion = ['icn1','hnd1','sin1'];
 export const dynamic = 'force-dynamic';
 
-export async function POST() {
+export async function GET() {
   if (!process.env.OPENAI_API_KEY) {
     return Response.json({ error: 'OPENAI_API_KEY missing' }, { status: 500 });
   }
+
+  // Use a realtime model you have; the alias usually points to the latest snapshot.
+  const model = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview';
+
   const r = await fetch('https://api.openai.com/v1/realtime/sessions', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       'Content-Type': 'application/json',
-      'OpenAI-Beta': 'realtime=v1'
+      'OpenAI-Beta': 'realtime=v1',
     },
+    
     body: JSON.stringify({
       model: 'gpt-4o-realtime-preview', // use a current realtime model you have
       modalities: ['audio','text'],
