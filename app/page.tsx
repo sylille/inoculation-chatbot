@@ -1,4 +1,6 @@
 'use client'
+import VoiceChat from '@/components/VoiceChat'
+export default function Page(){ return <VoiceChat /> }
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
