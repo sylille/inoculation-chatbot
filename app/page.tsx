@@ -1,6 +1,4 @@
 'use client'
-import VoiceChat from '@/components/VoiceChat'
-export default function Page(){ return <VoiceChat /> }
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -201,7 +199,7 @@ export default function Page() {
   const langOptions = [
     { code: 'auto', label: 'Auto' },
     { code: 'ko-KR', label: '한국어' },
-    { code: 'en-US', label: 'English (US)' }    
+    { code: 'en-US', label: 'English (US)' }
   ]
 
   return (

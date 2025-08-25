@@ -1,4 +1,5 @@
 import './globals.css'
+import { SpeedInsights } from "@vercel/speed-insights/next"
 
 export const metadata = { title: 'My Chat', description: 'Inoculation Chat Beta' }
 
