@@ -11,19 +11,17 @@
   },
   "dependencies": {
     "@vercel/speed-insights": "^1.0.0",
-    "next": "14.2.5",
     "formidable": "2.1.1",
+    "next": "14.2.5",
     "react": "18.2.0",
     "react-dom": "18.2.0",
-    "axios": "^1.7.2",
-    "form-data": "^4.0.0",
-    "formidable": "^3.5.1"
+    "axios": "^1.7.2"
   },
   "devDependencies": {
+    "@types/formidable": "^2.0.6",
     "typescript": "^5.5.4",
     "@types/node": "^20.11.30",
     "@types/react": "^18.2.66",
-    "@types/react-dom": "^18.2.22",
-    "@types/formidable": "^2.0.6"
+    "@types/react-dom": "^18.2.22"
   }
 }
