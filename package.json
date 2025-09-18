@@ -12,6 +12,7 @@
   "dependencies": {
     "@vercel/speed-insights": "^1.0.0",
     "next": "14.2.5",
+    "formidable": "2.1.1",
     "react": "18.2.0",
     "react-dom": "18.2.0",
     "axios": "^1.7.2",
@@ -22,6 +23,7 @@
     "typescript": "^5.5.4",
     "@types/node": "^20.11.30",
     "@types/react": "^18.2.66",
-    "@types/react-dom": "^18.2.22"
+    "@types/react-dom": "^18.2.22",
+    "@types/formidable": "^2.0.6"
   }
 }
