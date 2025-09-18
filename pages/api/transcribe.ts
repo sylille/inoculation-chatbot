@@ -53,8 +53,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const form = new FormData()
     // Pass filename as 3rd arg so the API sees a file name
     form.append('file', blob, originalFilename || 'voice.webm')
-    form.append('model', 'whisper-1') // change if your org uses a different STT model
-
+    form.append('model', 'gpt-4o-mini-transcribe') // instead of 'whisper-1'
+    
     const r = await fetch(
       `${process.env.OPENAI_API_BASE ?? 'https://api.openai.com'}/v1/audio/transcriptions`,
       {
