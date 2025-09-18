@@ -33,27 +33,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const { filePath, originalFilename } = await parseForm(req)
 
-    // Read the temp file into a Buffer
+    // Read the uploaded temp file
     const buffer = await fsp.readFile(filePath)
 
-    // Convert Buffer -> ArrayBuffer slice so TS is happy with Blob/File constructor
-    const ab = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+    // ✅ Use Uint8Array (valid BlobPart) to satisfy TS/undici types
+    const u8 = new Uint8Array(buffer)
+    const file = new File([u8], originalFilename || 'voice.webm', { type: 'audio/webm' })
 
-    // Create a File (undici provides File in Node 18+)
-    const file = new File([ab], originalFilename || 'voice.webm', { type: 'audio/webm' })
-
-    // Build multipart payload using Web FormData (no 'form-data' pkg)
     const form = new FormData()
     form.append('file', file)
-    form.append('model', 'whisper-1') // swap if your org uses another STT model
+    form.append('model', 'whisper-1') // change if your org uses a different STT model
 
     const r = await fetch(
       `${process.env.OPENAI_API_BASE ?? 'https://api.openai.com'}/v1/audio/transcriptions`,
       {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY!}`,
-        },
+        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY!}` },
         body: form,
       }
     )
