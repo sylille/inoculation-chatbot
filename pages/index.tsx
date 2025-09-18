@@ -102,9 +102,10 @@ Behavior rules:
 
       speakText(reply)
     } catch (err: any) {
-      console.error(err)
-      alert('Error sending audio: ' + String(err?.message ?? err))
-    }
+  console.error(err)
+  const serverMsg = err?.response?.data?.error || err?.message || String(err)
+  alert('Error sending audio: ' + serverMsg)
+}
   }
 
   function speakText(text: string) {
