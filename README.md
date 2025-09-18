@@ -1,2 +1,0 @@
-# inoculation-chatbot
-
