@@ -1,22 +1,27 @@
-{
-  "name": "inoculation-chatbot",
-  "private": true,
+{  "name": "inoculation-chatbot",
   "version": "0.1.0",
+  "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3000",
     "build": "next build",
     "start": "next start"
   },
-  "dependencies": {
-    "@vercel/speed-insights": "^1.0.0",
-    "next": "14.3.0",
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
-    "form-data": "^4.0.0",
-    "axios": "^1.4.0",
-    "multer": "^1.4.5" 
-  },
   "engines": {
     "node": ">=18.17.0"
+  },
+  "dependencies": {
+    "@vercel/speed-insights": "^1.0.0",
+    "next": "14.2.5",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "axios": "^1.7.2",
+    "form-data": "^4.0.0",
+    "formidable": "^3.5.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/node": "^20.11.30",
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.22"
   }
 }
