@@ -56,8 +56,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     form.append('file', blob, originalFilename || 'voice.webm')
     form.append('model', 'gpt-4o-mini-transcribe') // instead of 'whisper-1'
     
-    import { openAIHeaders } from '../../lib/openaiHeaders'
-    // ...
     const r = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
       headers: openAIHeaders(false),
