@@ -14,7 +14,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       headers: openAIHeaders(true),
       body: JSON.stringify({
         model,
-        voice: 'alloy',       // try 'verse', 'aria', etc. (depends on availability)
+        voice: 'aria',       // try 'verse', 'aria', etc. (depends on availability)
         input: text,
         format: 'mp3'
       })

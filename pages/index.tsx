@@ -344,7 +344,7 @@ Behavior rules:
             }}
             aria-pressed={isRecording}
           >
-            {isRecording ? 'Listening…' : '🎤'}
+            {isRecording ? '듣는중' : '🎤'}
           </button>
         </div>
 
