@@ -7,11 +7,7 @@ type Msg = { role: Role; content: string }
 type TranscribeResp = { text: string }
 type ChatResp = { text: string }
 
-type LogRow = {
-  ts: string
-  user: string
-  npc: string
-}
+type LogRow = { ts: string; user: string; npc: string }
 
 export default function Home() {
   const [isRecording, setIsRecording] = useState(false)
@@ -33,11 +29,11 @@ Behavior rules:
     }
   ])
 
-  // UI options
-  const [useServerVoice, setUseServerVoice] = useState<boolean>(true) // toggle server TTS vs browser TTS
+  // options / logs
+  const [useServerVoice, setUseServerVoice] = useState<boolean>(true)
   const [logs, setLogs] = useState<LogRow[]>([])
 
-  // Media / audio nodes
+  // audio graph / detection
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
@@ -45,15 +41,20 @@ Behavior rules:
   const analyserRef = useRef<AnalyserNode | null>(null)
   const rafRef = useRef<number | null>(null)
   const silenceStartRef = useRef<number | null>(null)
+  const maxDurTimerRef = useRef<number | null>(null)
+  const [rmsUI, setRmsUI] = useState(0) // 0..1 for pulsing ring
 
-  // Simple “speaking” audio element for server TTS
+  // Max duration cap (ms)
+  const MAX_DURATION_MS = 30000
+
+  // Server TTS audio
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
 
   useEffect(() => {
     audioPlayerRef.current = new Audio()
     return () => {
-      // cleanup
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      if (maxDurTimerRef.current) window.clearTimeout(maxDurTimerRef.current)
       if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
         audioCtxRef.current.close().catch(() => {})
       }
@@ -62,7 +63,7 @@ Behavior rules:
     }
   }, [])
 
-  // --- Recording with auto-stop on silence ---
+  // ---------- Recording with adaptive silence + pulsing ring + max duration ----------
   async function startRecording() {
     try {
       setTranscript('')
@@ -75,7 +76,7 @@ Behavior rules:
       mediaRecorderRef.current = mr
       chunksRef.current = []
 
-      // Build analyser for silence detection (RMS threshold)
+      // Audio graph
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
       audioCtxRef.current = ctx
       const source = ctx.createMediaStreamSource(stream)
@@ -84,30 +85,35 @@ Behavior rules:
       source.connect(analyser)
       analyserRef.current = analyser
 
+      // Collect audio
       mr.ondataavailable = (e: BlobEvent) => {
         if (e.data && e.data.size > 0) chunksRef.current.push(e.data)
       }
 
       mr.onstop = async () => {
-        // Stop meters
         if (rafRef.current) cancelAnimationFrame(rafRef.current)
-        // tear down mic
+        if (maxDurTimerRef.current) window.clearTimeout(maxDurTimerRef.current)
         stream.getTracks().forEach(t => t.stop())
         streamRef.current = null
+        setRmsUI(0)
 
-        // Build blob and send
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
-        if (blob.size > 0) {
-          await sendAudio(blob)
-        } else {
-          console.warn('Empty recording')
-        }
+        if (blob.size > 0) await sendAudio(blob)
       }
 
+      // Start capture
       mr.start()
       setIsRecording(true)
       silenceStartRef.current = null
-      monitorSilence() // kick off RMS checking
+
+      // Calibrate ambient and start loop
+      await calibrateSilence(analyser)
+      monitorSilenceAdaptive()
+
+      // Max duration cap
+      maxDurTimerRef.current = window.setTimeout(() => {
+        if (isRecording) stopRecording()
+      }, MAX_DURATION_MS)
     } catch (err) {
       console.error(err)
       alert('Microphone permission or recording failed.')
@@ -124,44 +130,74 @@ Behavior rules:
     }
   }
 
-  function monitorSilence() {
+  // ambient calibration
+  async function calibrateSilence(analyser: AnalyserNode) {
+    const data = new Float32Array(analyser.fftSize)
+    const samples: number[] = []
+    const start = performance.now()
+    while (performance.now() - start < 800) {
+      analyser.getFloatTimeDomainData(data)
+      samples.push(rmsFromFloat(data))
+      await new Promise(r => requestAnimationFrame(r))
+    }
+    const ambient = samples.reduce((a, b) => a + b, 0) / Math.max(1, samples.length)
+    ;(analyser as any).__ambient = ambient
+  }
+
+  function rmsFromFloat(buf: Float32Array) {
+    let sum = 0
+    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i]
+    return Math.sqrt(sum / buf.length)
+  }
+
+  function monitorSilenceAdaptive() {
     const analyser = analyserRef.current
     if (!analyser) return
 
-    const data = new Uint8Array(analyser.fftSize)
-    const SILENCE_RMS = 0.02   // adjust if needed
-    const SILENCE_MS = 1200    // auto-stop after ~1.2s of silence
+    const data = new Float32Array(analyser.fftSize)
+    const ambient = (analyser as any).__ambient ?? 0.01
 
-    const loop = (t: number) => {
-      analyser.getByteTimeDomainData(data)
-      // Compute RMS (0..1)
-      let sum = 0
-      for (let i = 0; i < data.length; i++) {
-        const v = (data[i] - 128) / 128
-        sum += v * v
-      }
-      const rms = Math.sqrt(sum / data.length)
+    // Hysteresis thresholds relative to ambient
+    const startTalk = Math.max(ambient * 3, 0.02)
+    const stopTalk  = Math.max(ambient * 1.5, 0.012)
 
-      if (rms < SILENCE_RMS) {
-        // start or continue counting silence
-        if (silenceStartRef.current == null) silenceStartRef.current = performance.now()
-        const silenceFor = performance.now() - (silenceStartRef.current ?? 0)
-        if (silenceFor > SILENCE_MS && isRecording) {
-          stopRecording()
-          return
+    const MIN_SPEECH_MS = 400
+    const MIN_SILENCE_MS = 1000
+
+    let state: 'silent' | 'talking' = 'silent'
+    let stateSince = performance.now()
+
+    const loop = () => {
+      analyser.getFloatTimeDomainData(data)
+      const rms = rmsFromFloat(data)
+
+      // update UI ring with eased RMS
+      setRmsUI(prev => prev * 0.85 + Math.min(1, rms * 6) * 0.15)
+
+      const now = performance.now()
+      if (state === 'silent') {
+        if (rms > startTalk && now - stateSince > 120) {
+          state = 'talking'
+          stateSince = now
         }
       } else {
-        // reset silence timer when voice detected
-        silenceStartRef.current = null
+        if (rms < stopTalk && now - stateSince > MIN_SPEECH_MS) {
+          if (silenceStartRef.current == null) silenceStartRef.current = now
+          const silenceFor = now - (silenceStartRef.current ?? now)
+          if (silenceFor > MIN_SILENCE_MS && isRecording) {
+            stopRecording()
+            return
+          }
+        } else {
+          silenceStartRef.current = null
+        }
       }
-
       rafRef.current = requestAnimationFrame(loop)
     }
-
     rafRef.current = requestAnimationFrame(loop)
   }
 
-  // --- Network calls ---
+  // ---------- Network calls ----------
   async function sendAudio(blob: Blob) {
     try {
       const form = new FormData()
@@ -173,7 +209,6 @@ Behavior rules:
       const text: string = String(tResp.data?.text ?? '')
       setTranscript(text)
 
-      // Conversation
       const userMsg: Msg = { role: 'user', content: text }
       const newMessages: Msg[] = [...messages, userMsg]
       setMessages(newMessages)
@@ -183,15 +218,10 @@ Behavior rules:
       setNpcReply(reply)
       setMessages(prev => [...prev, { role: 'assistant', content: reply }])
 
-      // Log row
       setLogs(prev => [...prev, { ts: new Date().toISOString(), user: text, npc: reply }])
 
-      // Speak
-      if (useServerVoice) {
-        await speakServer(reply)
-      } else {
-        speakBrowser(reply)
-      }
+      if (useServerVoice) await speakServer(reply)
+      else speakBrowser(reply)
     } catch (err: any) {
       const serverMsg = err?.response?.data?.error || err?.message || String(err)
       console.error(err)
@@ -199,21 +229,18 @@ Behavior rules:
     }
   }
 
-  // --- TTS options ---
+  // ---------- TTS ----------
   function speakBrowser(text: string) {
     if (!text) return
     try {
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel()
         const u = new SpeechSynthesisUtterance(text)
-        // You can adjust these or pick a voice by language
         u.rate = 1.0
         u.pitch = 1.0
         // const ko = window.speechSynthesis.getVoices().find(v => v.lang.startsWith('ko'))
         // if (ko) u.voice = ko
         window.speechSynthesis.speak(u)
-      } else {
-        console.warn('speechSynthesis not supported')
       }
     } catch (e) {
       console.error('Browser TTS failed', e)
@@ -227,10 +254,7 @@ Behavior rules:
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text })
       })
-      if (!r.ok) {
-        const errTxt = await r.text()
-        throw new Error(errTxt)
-      }
+      if (!r.ok) throw new Error(await r.text())
       const arrayBuf = await r.arrayBuffer()
       const blob = new Blob([arrayBuf], { type: 'audio/mpeg' })
       const url = URL.createObjectURL(blob)
@@ -239,17 +263,27 @@ Behavior rules:
         await audioPlayerRef.current.play()
       }
     } catch (e) {
-      console.error('Server TTS failed, falling back to browser TTS', e)
+      console.error('Server TTS failed; fallback to browser', e)
       speakBrowser(text)
     }
   }
 
-  // --- CSV export ---
+  // Replay last reply button
+  async function replayLast() {
+    if (!npcReply) return
+    if (useServerVoice) await speakServer(npcReply)
+    else speakBrowser(npcReply)
+  }
+
+  // ---------- CSV export (UTF-8 BOM for Korean) ----------
   function downloadCSV() {
     const header = ['timestamp', 'user', 'npc']
     const rows = logs.map(r => [r.ts, csvEscape(r.user), csvEscape(r.npc)])
     const csv = [header.join(','), ...rows.map(r => r.join(','))].join('\n')
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+
+    const bom = new Uint8Array([0xEF, 0xBB, 0xBF]) // Excel-friendly UTF-8
+    const blob = new Blob([bom, csv], { type: 'text/csv;charset=utf-8' })
+
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -273,27 +307,46 @@ Behavior rules:
     if ('speechSynthesis' in window) window.speechSynthesis.cancel()
   }
 
+  // ---------- UI ----------
+  const ringSize = 110
+  const pulse = Math.max(0, Math.min(1, rmsUI)) // clamp 0..1
+  const glow = 8 + pulse * 18
+  const scale = 1 + pulse * 0.12
+
   return (
     <main style={{ padding: 24, fontFamily: 'Inter, Arial, sans-serif', maxWidth: 900, margin: '0 auto' }}>
       <h1 style={{ marginBottom: 8 }}>Inoculation NPC — Audio Roleplay</h1>
       <p style={{ color: '#555', marginBottom: 16 }}>
-        Tap the mic, speak, and pause — it stops automatically when you finish.
+        Tap the mic, speak, and pause — it stops automatically. Max {Math.round(MAX_DURATION_MS/1000)}s per turn.
       </p>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '16px 0' }}>
-        {/* One-tap button: start, then auto-stop on silence */}
-        <button
-          onClick={() => (isRecording ? stopRecording() : startRecording())}
+        {/* Pulsing ring container */}
+        <div
           style={{
-            width: 84, height: 84, borderRadius: '50%',
-            border: 'none',
-            background: isRecording ? '#da1e28' : '#0f62fe',
-            color: '#fff', fontSize: 22, cursor: 'pointer', boxShadow: '0 6px 16px rgba(0,0,0,0.15)'
+            width: ringSize, height: ringSize, borderRadius: '50%',
+            display: 'grid', placeItems: 'center',
+            boxShadow: `0 0 ${glow}px ${Math.max(2, glow/4)}px rgba(15,98,254,0.5)`,
+            transition: 'box-shadow 120ms linear, transform 120ms linear',
+            transform: `scale(${scale})`,
+            background: isRecording ? 'rgba(15,98,254,0.08)' : 'transparent'
           }}
-          aria-pressed={isRecording}
         >
-          {isRecording ? 'Listening…' : '🎤'}
-        </button>
+          {/* One-tap button */}
+          <button
+            onClick={() => (isRecording ? stopRecording() : startRecording())}
+            style={{
+              width: 84, height: 84, borderRadius: '50%',
+              border: 'none',
+              background: isRecording ? '#da1e28' : '#0f62fe',
+              color: '#fff', fontSize: 18, cursor: 'pointer',
+              boxShadow: '0 6px 16px rgba(0,0,0,0.15)'
+            }}
+            aria-pressed={isRecording}
+          >
+            {isRecording ? 'Listening…' : '🎤'}
+          </button>
+        </div>
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <input
@@ -303,6 +356,10 @@ Behavior rules:
           />
           Better voice (server TTS)
         </label>
+
+        <button onClick={replayLast} style={btnSecondaryStyle} disabled={!npcReply}>
+          Replay last reply
+        </button>
 
         <button onClick={resetConversation} style={btnSecondaryStyle}>Reset</button>
         <button onClick={downloadCSV} style={btnSecondaryStyle}>Download CSV</button>
@@ -334,7 +391,7 @@ Behavior rules:
       </section>
 
       <footer style={{ marginTop: 24, fontSize: 12, color: '#666' }}>
-        Tip: Auto-stop uses silence detection (~1.2s). If it cuts off, speak continuously or tap again.
+        Tip: If auto-stop cuts off, speak continuously or tap again. You can also replay the last reply.
       </footer>
     </main>
   )
