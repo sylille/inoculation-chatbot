@@ -2,6 +2,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import formidable, { File as FormidableFile } from 'formidable'
 import { promises as fsp } from 'fs'
+import { openAIHeaders } from '../../lib/openaiHeaders'
 
 export const config = {
   api: {
@@ -59,7 +60,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       `${process.env.OPENAI_API_BASE ?? 'https://api.openai.com'}/v1/audio/transcriptions`,
       {
         method: 'POST',
-        headers: openaiHeaders(false),
+        headers: openAIHeaders(false),
         body: form,
       }
     )
