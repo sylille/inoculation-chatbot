@@ -1,5 +1,5 @@
-// pages/api/chat.ts
 import type { NextApiRequest, NextApiResponse } from 'next'
+import { openAIHeaders } from '../../lib/openaiHeaders'
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
@@ -7,13 +7,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!Array.isArray(messages)) return res.status(400).json({ error: 'messages array required' })
 
   const model = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini'
+
   try {
     const r = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY!}`,
-      },
+      headers: openAIHeaders(true),
       body: JSON.stringify({ model, messages, max_tokens: 800, temperature: 0.7 }),
     })
     const txt = await r.text()
