@@ -59,7 +59,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       `${process.env.OPENAI_API_BASE ?? 'https://api.openai.com'}/v1/audio/transcriptions`,
       {
         method: 'POST',
-        headers: openAIHeaders(false),
+        headers: openaiHeaders(false),
         body: form,
       }
     )
