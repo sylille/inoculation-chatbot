@@ -449,9 +449,9 @@ async function downloadRecordingsZip() {
 
   return (
     <main style={{ padding: 24, fontFamily: 'Inter, Arial, sans-serif', maxWidth: 900, margin: '0 auto' }}>
-      <h1 style={{ marginBottom: 8 }}>Inoculation NPC — Audio + Text Roleplay</h1>
+      <h1 style={{ marginBottom: 8 }}>면역 이론 기반 챗봇 아리 - 저와 대화해보세요!</h1>
       <p style={{ color: '#555', marginBottom: 12 }}>
-        Click the chat area to speak (auto-stop on pause), or type below to send a message.
+        채팅창을 클릭하고 말해주세요. 채팅으로 대화하시려면 아래 작성해주세요. 
       </p>
 
       {/* Chat window (click to toggle recording) */}
@@ -531,7 +531,7 @@ async function downloadRecordingsZip() {
           style={{ padding: '10px 12px', background: '#0f62fe', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer' }}
           aria-label="메세지 보내기"
         >
-          Send
+          보내기
         </button>
       </div>
 
