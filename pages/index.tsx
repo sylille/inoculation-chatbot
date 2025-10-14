@@ -458,7 +458,7 @@ async function downloadRecordingsZip() {
       <section
         ref={(el) => { chatSectionRef.current = el }}
         onClick={() => (isRecording ? stopRecording() : startRecording())}
-        title={isRecording ? 'Click to stop recording' : 'Click to start recording'}
+        title={isRecording ? '녹음을 멈추려면 눌러주세요' : '녹음을 시작하려면 눌러주세요'}
         style={{
           border: `1px solid ${isRecording ? '#0f62fe' : '#e6e6e6'}`,
           boxShadow: `0 0 calc(var(--recGlow,0) * 18px) rgba(15,98,254,0.35)`,
@@ -510,7 +510,7 @@ async function downloadRecordingsZip() {
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         <input
           type="text"
-          placeholder="Type your message…"
+          placeholder="메세지를 입력하세요..."
           value={inputText}
           onChange={e => setInputText(e.target.value)}
           onKeyDown={e => {
@@ -529,7 +529,7 @@ async function downloadRecordingsZip() {
         <button
           onClick={sendText}
           style={{ padding: '10px 12px', background: '#0f62fe', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer' }}
-          aria-label="Send message"
+          aria-label="메세지 보내기"
         >
           Send
         </button>
@@ -538,10 +538,10 @@ async function downloadRecordingsZip() {
       {/* Bottom toolbar */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
         <button onClick={replayLast} style={btnSecondaryStyle} disabled={!chat.some(t => t.role === 'assistant')}>
-          Replay last reply
+          지난 답변 다시 듣기
         </button>
-        <button onClick={downloadCSV} style={btnSecondaryStyle}>Download CSV</button>
-        <button onClick={downloadRecordingsZip} style={btnSecondaryStyle}>Download recordings (.zip)</button>
+        <button onClick={downloadCSV} style={btnSecondaryStyle}>CSV 다운로드</button>
+        <button onClick={downloadRecordingsZip} style={btnSecondaryStyle}>녹음 다운로드
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', fontSize: 14 }}>
           <input
             type="checkbox"
@@ -550,11 +550,11 @@ async function downloadRecordingsZip() {
           />
           Better voice (server TTS)
         </label>
-        <button onClick={resetConversation} style={btnSecondaryStyle}>Reset</button>
+        <button onClick={resetConversation} style={btnSecondaryStyle}>재설정</button>
       </div>
 
       <footer style={{ marginTop: 12, fontSize: 12, color: '#666' }}>
-        Tip: Assistant speech auto-plays; all audio is saved for ZIP download.
+        참조: 에이전트 음성은 자동 재생 됩니다. 모든 오디오는 다운로드를 위해 저장됩니다.
       </footer>
     </main>
   )
