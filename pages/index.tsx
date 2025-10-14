@@ -207,6 +207,26 @@ export default function Home() {
     rafRef.current = requestAnimationFrame(loop)
   }
 
+// above downloadRecordingsZip
+
+async function loadJSZipFromCDN(): Promise<any> {
+  if (typeof window === 'undefined') {
+    throw new Error('JSZip is only available in the browser')
+  }
+  const w = window as any
+  if (w.JSZip) return w.JSZip
+
+  await new Promise<void>((resolve, reject) => {
+    const s = document.createElement('script')
+    s.src = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js'
+    s.async = true
+    s.onload = () => resolve()
+    s.onerror = () => reject(new Error('Failed to load JSZip from CDN'))
+    document.head.appendChild(s)
+  })
+  return (window as any).JSZip
+}
+
   // ---------- Voice path helpers ----------
   async function handleRecordedBlob(blob: Blob) {
     try {
@@ -363,61 +383,63 @@ export default function Home() {
   }
 
   // ---------- Recordings ZIP (dynamic import for smaller initial bundle) ----------
-  async function downloadRecordingsZip() {
-    try {
-      const turnsWithAudio = chat
-        .map((t, idx) => ({ ...t, idx }))
-        .filter(t => !!t.audioUrl)
+async function downloadRecordingsZip() {
+  try {
+    const turnsWithAudio = chat
+      .map((t, idx) => ({ ...t, idx }))
+      .filter(t => !!t.audioUrl)
 
-      if (turnsWithAudio.length === 0) {
-        alert('No recordings to download yet.')
-        return
-      }
-
-      const { default: JSZip } = await import('jszip')
-      const zip = new JSZip()
-
-      for (const t of turnsWithAudio) {
-        try {
-          const url = t.audioUrl!
-          const res = await fetch(url)
-          const blob = await res.blob()
-          let ext = 'bin'
-          if (blob.type.includes('webm')) ext = 'webm'
-          else if (blob.type.includes('mpeg') || blob.type.includes('mp3')) ext = 'mp3'
-          else if (blob.type.includes('wav')) ext = 'wav'
-          const who = t.role === 'user' ? 'user' : 'assistant'
-          const idxStr = String(t.idx + 1).padStart(3, '0')
-          const base = `${idxStr}_${who}`
-          zip.file(`${base}.${ext}`, blob)
-          zip.file(`${base}.txt`, `[${who}] ${t.content}\n`)
-        } catch (e) {
-          console.warn('Failed to include one recording:', e)
-        }
-      }
-
-      const manifest = chat
-        .map((t, i) => {
-          const who = t.role === 'user' ? 'user' : t.role === 'assistant' ? 'assistant' : 'system'
-          return `${String(i + 1).padStart(3, '0')}  ${who}: ${t.content}`
-        })
-        .join('\n')
-      zip.file('conversation_manifest.txt', manifest)
-
-      const out = await zip.generateAsync({ type: 'blob' })
-      const url = URL.createObjectURL(out)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `inoculation_npc_recordings_${new Date().toISOString().slice(0,10)}.zip`
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(url)
-    } catch (e: any) {
-      console.error(e)
-      alert('Could not create ZIP: ' + (e?.message || String(e)))
+    if (turnsWithAudio.length === 0) {
+      alert('No recordings to download yet.')
+      return
     }
+
+    // ⬇️ no build-time dependency, loads at runtime in the browser
+    const JSZip = await loadJSZipFromCDN()
+    const zip = new JSZip()
+
+    for (const t of turnsWithAudio) {
+      try {
+        const url = t.audioUrl!
+        const res = await fetch(url)
+        const blob = await res.blob()
+        let ext = 'bin'
+        if (blob.type.includes('webm')) ext = 'webm'
+        else if (blob.type.includes('mpeg') || blob.type.includes('mp3')) ext = 'mp3'
+        else if (blob.type.includes('wav')) ext = 'wav'
+        const who = t.role === 'user' ? 'user' : 'assistant'
+        const idxStr = String(t.idx + 1).padStart(3, '0')
+        const base = `${idxStr}_${who}`
+        zip.file(`${base}.${ext}`, blob)
+        zip.file(`${base}.txt`, `[${who}] ${t.content}\n`)
+      } catch (e) {
+        console.warn('Failed to include one recording:', e)
+      }
+    }
+
+    const manifest = chat
+      .map((t, i) => {
+        const who = t.role === 'user' ? 'user' : t.role === 'assistant' ? 'assistant' : 'system'
+        return `${String(i + 1).padStart(3, '0')}  ${who}: ${t.content}`
+      })
+      .join('\n')
+    zip.file('conversation_manifest.txt', manifest)
+
+    const out = await zip.generateAsync({ type: 'blob' })
+    const url = URL.createObjectURL(out)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `inoculation_npc_recordings_${new Date().toISOString().slice(0,10)}.zip`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e: any) {
+    console.error(e)
+    alert('Could not create ZIP: ' + (e?.message || String(e)))
   }
+}
+
 
   // ---------- UI ----------
   const viewChat = useMemo(
