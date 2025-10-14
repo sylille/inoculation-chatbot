@@ -13,8 +13,8 @@ type LogRow = { ts: string; user: string; npc: string }
 type ChatTurn = {
   role: Role
   content: string
+  // keep audio for zipping / replay, but we do NOT render players
   audioUrl?: string // user's recorded audio or assistant's TTS (server) per turn
-  // (we keep url only; blobs are reconstructed via fetch on demand for zip)
 }
 
 export default function Home() {
@@ -45,12 +45,12 @@ export default function Home() {
   const rafRef = useRef<number | null>(null)
   const silenceStartRef = useRef<number | null>(null)
   const maxDurTimerRef = useRef<number | null>(null)
-  const [rmsUI, setRmsUI] = useState(0) // 0..1 for pulsing ring
+  const [rmsUI, setRmsUI] = useState(0) // 0..1 for subtle “recording” glow
 
   // Max duration cap (ms) — preserved from your original file :contentReference[oaicite:1]{index=1}
   const MAX_DURATION_MS = 30000
 
-  // Shared audio element for immediate playback (we also keep per-turn URLs on the chat items)
+  // Shared audio element for immediate playback (we also keep per-turn URLs for zip)
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
 
   useEffect(() => {
@@ -71,7 +71,7 @@ export default function Home() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [chat])
 
-  // ---------- Recording with adaptive silence + pulsing ring + max duration ----------
+  // ---------- Recording with adaptive silence + max duration ----------
   async function startRecording() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -81,7 +81,7 @@ export default function Home() {
       mediaRecorderRef.current = mr
       chunksRef.current = []
 
-      // Audio graph
+      // Audio graph (for silence detection)
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
       audioCtxRef.current = ctx
       const source = ctx.createMediaStreamSource(stream)
@@ -176,7 +176,7 @@ export default function Home() {
       analyser.getFloatTimeDomainData(data)
       const rms = rmsFromFloat(data)
 
-      // update UI ring with eased RMS
+      // subtle “recording” glow driver (not a button glow anymore)
       setRmsUI(prev => prev * 0.85 + Math.min(1, rms * 6) * 0.15)
 
       const now = performance.now()
@@ -280,14 +280,17 @@ export default function Home() {
       const blob = new Blob([arrayBuf], { type: 'audio/mpeg' })
       const url = URL.createObjectURL(blob)
 
+      // auto-play immediately
       if (audioPlayerRef.current) {
         audioPlayerRef.current.src = url
-        await audioPlayerRef.current.play()
+        // NOTE: browsers may block autoplay without user interaction on first load.
+        // Once the user has interacted (click/typing), this should play fine.
+        await audioPlayerRef.current.play().catch(() => {/* ignore */})
       }
       return url
     } catch (e) {
       console.error('Server TTS failed; fallback to browser', e)
-      speakBrowser(text)
+      speakBrowser(text) // browser speechSynthesis auto-plays
       return undefined
     }
   }
@@ -299,16 +302,17 @@ export default function Home() {
     } else {
       speakBrowser(reply)
     }
+    // store audio url for zipping / replay; do NOT render players
     setChat(prev => [...prev, { role: 'assistant', content: reply, audioUrl: assistantAudioUrl }])
   }
 
-  // Replay last reply button
+  // Replay last reply button (bottom toolbar)
   async function replayLast() {
     for (let i = chat.length - 1; i >= 0; i--) {
       if (chat[i].role === 'assistant') {
         if (chat[i].audioUrl && audioPlayerRef.current) {
-          audioPlayerRef.current.src = chat[i].audioUrl! // non-null after guard
-          await audioPlayerRef.current.play()
+          audioPlayerRef.current.src = chat[i].audioUrl!
+          await audioPlayerRef.current.play().catch(() => {/* ignore */})
         } else {
           if (useServerVoice) await speakServer(chat[i].content)
           else speakBrowser(chat[i].content)
@@ -358,8 +362,7 @@ export default function Home() {
     if ('speechSynthesis' in window) window.speechSynthesis.cancel()
   }
 
-  // ---------- Recordings ZIP (new) ----------
-  // On-demand loader for JSZip (UMD) from CDN; attaches window.JSZip
+  // ---------- Recordings ZIP ----------
   async function ensureJSZip(): Promise<any> {
     const w = window as any
     if (w.JSZip) return w.JSZip
@@ -376,7 +379,6 @@ export default function Home() {
 
   async function downloadRecordingsZip() {
     try {
-      // Gather turns that have audio
       const turnsWithAudio = chat
         .map((t, idx) => ({ ...t, idx }))
         .filter(t => !!t.audioUrl)
@@ -389,13 +391,11 @@ export default function Home() {
       const JSZip = await ensureJSZip()
       const zip = new JSZip()
 
-      // Fetch each audio URL and add to zip
       for (const t of turnsWithAudio) {
         try {
-          const url = t.audioUrl!                  // assert non-null after filter
+          const url = t.audioUrl!
           const res = await fetch(url)
           const blob = await res.blob()
-          // Decide extension from MIME type (best effort)
           let ext = 'bin'
           if (blob.type.includes('webm')) ext = 'webm'
           else if (blob.type.includes('mpeg') || blob.type.includes('mp3')) ext = 'mp3'
@@ -404,15 +404,12 @@ export default function Home() {
           const idxStr = String(t.idx + 1).padStart(3, '0')
           const base = `${idxStr}_${who}`
           zip.file(`${base}.${ext}`, blob)
-          // Also save the text content as a sidecar .txt for convenience
-          const textContent = `[${who}] ${t.content}\n`
-          zip.file(`${base}.txt`, textContent)
+          zip.file(`${base}.txt`, `[${who}] ${t.content}\n`)
         } catch (e) {
           console.warn('Failed to include one recording:', e)
         }
       }
 
-      // Add a minimal conversation manifest for reference
       const manifest = chat
         .map((t, i) => {
           const who = t.role === 'user' ? 'user' : t.role === 'assistant' ? 'assistant' : 'system'
@@ -437,88 +434,37 @@ export default function Home() {
   }
 
   // ---------- UI ----------
-  const ringSize = 110
-  const pulse = Math.max(0, Math.min(1, rmsUI)) // clamp 0..1
-  const glow = 8 + pulse * 18
-  const scale = 1 + pulse * 0.12
+  // subtle “recording” border glow on chat window driven by rmsUI
+  const recordingGlow = isRecording ? (8 + Math.min(18, rmsUI * 18)) : 0
 
   return (
     <main style={{ padding: 24, fontFamily: 'Inter, Arial, sans-serif', maxWidth: 900, margin: '0 auto' }}>
       <h1 style={{ marginBottom: 8 }}>Inoculation NPC — Audio + Text Roleplay</h1>
-      <p style={{ color: '#555', marginBottom: 16 }}>
-        Tap the mic 🎤 or type below. Speak freely—auto-stop after a pause. Max {Math.round(MAX_DURATION_MS / 1000)}s per turn.
+      <p style={{ color: '#555', marginBottom: 12 }}>
+        Click the chat area to speak (auto-stop on pause), or type below to send a message.
       </p>
 
-      {/* Controls row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', margin: '16px 0' }}>
-        {/* Pulsing ring container */}
-        <div
-          style={{
-            width: ringSize,
-            height: ringSize,
-            borderRadius: '50%',
-            display: 'grid',
-            placeItems: 'center',
-            boxShadow: `0 0 ${glow}px ${Math.max(2, glow / 4)}px rgba(15,98,254,0.5)`,
-            transition: 'box-shadow 120ms linear, transform 120ms linear',
-            transform: `scale(${scale})`,
-            background: isRecording ? 'rgba(15,98,254,0.08)' : 'transparent'
-          }}
-        >
-          {/* One-tap button */}
-          <button
-            onClick={() => (isRecording ? stopRecording() : startRecording())}
-            style={{
-              width: 84,
-              height: 84,
-              borderRadius: '50%',
-              border: 'none',
-              background: isRecording ? '#da1e28' : '#0f62fe',
-              color: '#fff',
-              fontSize: 18,
-              cursor: 'pointer',
-              boxShadow: '0 6px 16px rgba(0,0,0,0.15)'
-            }}
-            aria-pressed={isRecording}
-            aria-label={isRecording ? 'Stop recording' : 'Start recording'}
-          >
-            {isRecording ? '듣는중' : '🎤'}
-          </button>
-        </div>
-
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <input
-            type="checkbox"
-            checked={useServerVoice}
-            onChange={e => setUseServerVoice(e.target.checked)}
-          />
-          Better voice (server TTS)
-        </label>
-
-        <button onClick={replayLast} style={btnSecondaryStyle} disabled={!chat.some(t => t.role === 'assistant')}>
-          Replay last reply
-        </button>
-
-        <button onClick={resetConversation} style={btnSecondaryStyle}>Reset</button>
-        <button onClick={downloadCSV} style={btnSecondaryStyle}>Download CSV</button>
-        <button onClick={downloadRecordingsZip} style={btnSecondaryStyle}>Download recordings (.zip)</button>
-      </div>
-
-      {/* Chat window */}
+      {/* Chat window (click to toggle recording) */}
       <section
+        onClick={() => (isRecording ? stopRecording() : startRecording())}
+        title={isRecording ? 'Click to stop recording' : 'Click to start recording'}
         style={{
-          border: '1px solid #e6e6e6',
+          border: `1px solid ${isRecording ? '#0f62fe' : '#e6e6e6'}`,
+          boxShadow: isRecording ? `0 0 ${recordingGlow}px ${Math.max(2, recordingGlow/3)}px rgba(15,98,254,0.35)` : 'none',
           borderRadius: 12,
           padding: 12,
-          height: 420,
+          height: 460,
           overflowY: 'auto',
-          background: '#fafafa'
+          background: '#fafafa',
+          cursor: 'pointer',
+          userSelect: 'none'
         }}
-        aria-label="Conversation"
+        aria-label="Conversation (click to talk)"
+        role="button"
       >
         {chat.length === 0 && (
-          <div style={{ color: '#777', textAlign: 'center', marginTop: 140 }}>
-            Say something 🎤 or type a message to start.
+          <div style={{ color: '#777', textAlign: 'center', marginTop: 160 }}>
+            Click here to talk 🎤 (no button!) or type below.
           </div>
         )}
         {chat.map((turn, i) => {
@@ -547,24 +493,41 @@ export default function Home() {
                   {isUser ? 'You' : 'NPC'}
                 </div>
                 <div style={{ fontSize: 15 }}>{turn.content}</div>
-                {turn.audioUrl && (
-                  <div style={{ marginTop: 8 }}>
-                    {/* Non-null assertion after conditional ensures src is string */}
-                    <audio controls src={turn.audioUrl!} style={{ width: '100%' }} />
-                  </div>
-                )}
+                {/* No per-turn audio players by request */}
               </div>
             </div>
           )
         })}
         <div ref={chatEndRef} />
+        {/* Recording pill indicator */}
+        {isRecording && (
+          <div
+            aria-live="polite"
+            style={{
+              position: 'sticky',
+              bottom: 8,
+              left: 0,
+              right: 0,
+              margin: '8px auto 0',
+              width: 'fit-content',
+              padding: '6px 10px',
+              borderRadius: 999,
+              background: '#0f62fe',
+              color: 'white',
+              fontSize: 12,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+            }}
+          >
+            Recording… click to stop
+          </div>
+        )}
       </section>
 
       {/* Text input */}
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         <input
           type="text"
-          placeholder="Type your message..."
+          placeholder="Type your message…"
           value={inputText}
           onChange={e => setInputText(e.target.value)}
           onKeyDown={e => {
@@ -582,19 +545,37 @@ export default function Home() {
         />
         <button
           onClick={sendText}
-          style={{ ...btnSecondaryStyle, background: '#0f62fe', color: 'white' }}
+          style={{ padding: '10px 12px', background: '#0f62fe', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer' }}
           aria-label="Send message"
         >
           Send
         </button>
       </div>
 
-      <footer style={{ marginTop: 16, fontSize: 12, color: '#666' }}>
-        Tip: You can talk 🎤 or type 💬 anytime. Voice turns and NPC speech are saved per message.
+      {/* Bottom toolbar (all utilities moved here) */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
+        <button onClick={replayLast} style={btnSecondaryStyle} disabled={!chat.some(t => t.role === 'assistant')}>
+          Replay last reply
+        </button>
+        <button onClick={downloadCSV} style={btnSecondaryStyle}>Download CSV</button>
+        <button onClick={downloadRecordingsZip} style={btnSecondaryStyle}>Download recordings (.zip)</button>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', fontSize: 14 }}>
+          <input
+            type="checkbox"
+            checked={useServerVoice}
+            onChange={e => setUseServerVoice(e.target.checked)}
+          />
+          Better voice (server TTS)
+        </label>
+        <button onClick={resetConversation} style={btnSecondaryStyle}>Reset</button>
+      </div>
+
+      <footer style={{ marginTop: 12, fontSize: 12, color: '#666' }}>
+        Tip: Click the chat area to start/stop recording. Assistant speech auto-plays and is saved for ZIP download.
       </footer>
 
       {/* Debug (optional) */}
-      <details style={{ marginTop: 12 }}>
+      <details style={{ marginTop: 10 }}>
         <summary style={{ cursor: 'pointer' }}>Debug: raw messages</summary>
         <ol style={{ paddingLeft: 18 }}>
           {messages.map((m, i) => (
