@@ -475,7 +475,7 @@ async function downloadRecordingsZip() {
       >
         {viewChat.length === 0 && (
           <div style={{ color: '#777', textAlign: 'center', marginTop: 160 }}>
-            Click here to talk 🎤 or type below.
+            대화하기 위해 여기를 누르거나 🎤 아래 텍스트로 작성해주세요.
           </div>
         )}
         {viewChat.map((turn, i) => (
