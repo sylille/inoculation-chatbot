@@ -434,7 +434,7 @@ export default function Home() {
 
       {/* Chat window (click to toggle recording) */}
       <section
-        ref={el => (chatSectionRef.current = el)}
+        ref={(el) => { chatSectionRef.current = el }}
         onClick={() => (isRecording ? stopRecording() : startRecording())}
         title={isRecording ? 'Click to stop recording' : 'Click to start recording'}
         style={{
@@ -498,7 +498,7 @@ export default function Home() {
             flex: 1,
             padding: 12,
             borderRadius: 10,
-            border: '1px solid '#ccc'",
+            border: '1px solid #ccc',
             fontSize: 15,
             outline: 'none'
           } as React.CSSProperties}
