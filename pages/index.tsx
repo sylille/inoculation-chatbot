@@ -538,10 +538,10 @@ async function downloadRecordingsZip() {
       {/* Bottom toolbar */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
         <button onClick={replayLast} style={btnSecondaryStyle} disabled={!chat.some(t => t.role === 'assistant')}>
-          지난 답변 다시 듣기
+          마지막 답변 다시 듣기
         </button>
         <button onClick={downloadCSV} style={btnSecondaryStyle}>CSV 다운로드</button>
-        <button onClick={downloadRecordingsZip} style={btnSecondaryStyle}>녹음 다운로드
+        <button onClick={downloadRecordingsZip} style={btnSecondaryStyle}>녹음 다운로드 (.zip)</button>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', fontSize: 14 }}>
           <input
             type="checkbox"
@@ -550,8 +550,9 @@ async function downloadRecordingsZip() {
           />
           Better voice (server TTS)
         </label>
-        <button onClick={resetConversation} style={btnSecondaryStyle}>재설정</button>
+        <button onClick={resetConversation} style={btnSecondaryStyle}>초기화</button>
       </div>
+
 
       <footer style={{ marginTop: 12, fontSize: 12, color: '#666' }}>
         참조: 에이전트 음성은 자동 재생 됩니다. 모든 오디오는 다운로드를 위해 저장됩니다.
