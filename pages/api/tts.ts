@@ -2,7 +2,7 @@
 export const config = { runtime: 'edge' }
 
 // Simple in-memory LRU. Lives as long as the edge instance is warm.
-type Entry = { buf: ArrayBuffer, at: number }
+type Entry = { buf: ArrayBuffer; at: number }
 const GLOBAL = globalThis as any
 if (!GLOBAL.__TTS_CACHE) GLOBAL.__TTS_CACHE = new Map<string, Entry>()
 const CACHE: Map<string, Entry> = GLOBAL.__TTS_CACHE
@@ -16,12 +16,13 @@ async function sha1(s: string) {
 }
 
 function touch(key: string, entry: Entry) {
+  // refresh recency
   CACHE.delete(key)
   CACHE.set(key, entry)
   if (CACHE.size > MAX_ITEMS) {
-    // evict oldest
-    const first = CACHE.keys().next().value
-    CACHE.delete(first)
+    // evict oldest (first key in insertion order) — guard the iterator for TS
+    const it = CACHE.keys().next()
+    if (!it.done) CACHE.delete(it.value)
   }
 }
 
@@ -29,24 +30,27 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return new Response('Method Not Allowed', { status: 405 })
 
   let body: { text?: string; voice?: string }
-  try { body = await req.json() } catch { return new Response('Bad JSON', { status: 400 }) }
+  try {
+    body = await req.json()
+  } catch {
+    return new Response('Bad JSON', { status: 400 })
+  }
 
   const text = (body.text ?? '').trim()
   if (!text) return new Response('text required', { status: 400 })
 
-  // You can expose a toggle in UI; default to a natural voice
   const voice = (body.voice ?? 'alloy')
 
   const key = await sha1(`v1|${voice}|${text}`)
   const cached = CACHE.get(key)
   if (cached) {
-    touch(key, cached)
+    touch(key, { ...cached, at: Date.now() })
     return new Response(cached.buf, {
       headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store' }
     })
   }
 
-  // OpenAI TTS – pick a fast model that returns MP3
+  // OpenAI TTS (MP3)
   const ctrl = new AbortController()
   const to = setTimeout(() => ctrl.abort(), 25_000)
 
@@ -54,11 +58,11 @@ export default async function handler(req: Request): Promise<Response> {
     const r = await fetch('https://api.openai.com/v1/audio/speech', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini-tts',  // fast, good quality; you can switch to 'tts-1' if preferred
+        model: 'gpt-4o-mini-tts',
         input: text,
         voice,
         format: 'mp3'
@@ -74,8 +78,7 @@ export default async function handler(req: Request): Promise<Response> {
     }
 
     const buf = await r.arrayBuffer()
-    const entry: Entry = { buf, at: Date.now() }
-    touch(key, entry)
+    touch(key, { buf, at: Date.now() })
 
     return new Response(buf, {
       headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store' }
