@@ -307,7 +307,7 @@ export default function Home() {
     for (let i = chat.length - 1; i >= 0; i--) {
       if (chat[i].role === 'assistant') {
         if (chat[i].audioUrl && audioPlayerRef.current) {
-          audioPlayerRef.current.src = chat[i].audioUrl
+          audioPlayerRef.current.src = chat[i].audioUrl! // non-null after guard
           await audioPlayerRef.current.play()
         } else {
           if (useServerVoice) await speakServer(chat[i].content)
@@ -392,7 +392,8 @@ export default function Home() {
       // Fetch each audio URL and add to zip
       for (const t of turnsWithAudio) {
         try {
-          const res = await fetch(t.audioUrl as string)
+          const url = t.audioUrl!                  // assert non-null after filter
+          const res = await fetch(url)
           const blob = await res.blob()
           // Decide extension from MIME type (best effort)
           let ext = 'bin'
@@ -548,7 +549,8 @@ export default function Home() {
                 <div style={{ fontSize: 15 }}>{turn.content}</div>
                 {turn.audioUrl && (
                   <div style={{ marginTop: 8 }}>
-                    <audio controls src={turn.audioUrl} style={{ width: '100%' }} />
+                    {/* Non-null assertion after conditional ensures src is string */}
+                    <audio controls src={turn.audioUrl!} style={{ width: '100%' }} />
                   </div>
                 )}
               </div>
